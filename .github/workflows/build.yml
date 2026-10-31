@@ -10,16 +10,19 @@ jobs:
   apks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 17
 
-      - uses: android-actions/setup-android@v3
+      - name: Accept Android SDK licenses (SDK is preinstalled on the runner)
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ -x "$SDKM" ]; then yes | "$SDKM" --licenses > /dev/null || true; fi
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: "8.7"
 
@@ -32,7 +35,7 @@ jobs:
           cp app/build/outputs/apk/phone/debug/app-phone-debug.apk dist/fire-air-mouse-phone-debug.apk
           cp app/build/outputs/apk/tv/debug/app-tv-debug.apk dist/fire-air-mouse-tv-debug.apk
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: fire-air-mouse-debug-apks
           path: dist/*.apk
