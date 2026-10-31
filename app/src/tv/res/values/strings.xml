@@ -1,0 +1,3 @@
+<resources>
+    <string name="service_desc">Shows a pointer and moves the on-screen focus when you use your own phone as a remote on your home network. It does not read or store screen content.</string>
+</resources>
