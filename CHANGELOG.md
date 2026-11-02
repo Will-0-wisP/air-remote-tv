@@ -1,5 +1,12 @@
 # Changelog
 
+## 5.3
+- TV: pointer highlight/selection now works inside apps – scans the top application window, accepts nodes that only expose a click/focus action, no longer discards whole subtrees that report "not visible", and handles apps with nothing focused yet. The phone's details popup shows the last scan (package, node and item counts).
+
+## 5.2.1
+- CI: removed the setup-android action (it failed with "Failed to find package 'tools'"); the runner's preinstalled SDK is used and licenses are accepted in a plain step.
+- CI: workflow actions updated to Node 24 versions (checkout v6, setup-java v5, setup-android v4, setup-gradle v6, upload-artifact v6).
+
 ## 5.2
 - Fix: buttons in the phone app's Connect dialog had zero width and were invisible (Find TV, One-tap setup, Allow pointer on TV, Install from file, Enable real keys). The dialog now scrolls, shows every action in order and displays the app version.
 

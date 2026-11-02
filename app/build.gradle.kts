@@ -14,7 +14,7 @@ android {
     namespace = "com.example.fireairmouse"
     compileSdk = 34
     defaultConfig {
-        minSdk = 24; targetSdk = 34; versionCode = 13; versionName = "5.2"
+        minSdk = 24; targetSdk = 34; versionCode = 14; versionName = "5.3"
         buildConfigField("String", "TV_APK_URL", "\"$tvApkUrl\"")
     }
 

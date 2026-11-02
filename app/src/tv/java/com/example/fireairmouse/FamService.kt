@@ -18,6 +18,7 @@ import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -61,6 +62,8 @@ class FamService : AccessibilityService() {
     private var lastScan = 0L
     private var locked = false; private var aimHeld = false
     private val navPending = AtomicInteger(0)
+    @Volatile private var scanInfo = "no scan yet"
+    private var visited = 0
     @Volatile private var phoneAddr: InetAddress? = null
     @Volatile private var phonePort = 0
     private val focusSeq = AtomicInteger(0)
@@ -137,7 +140,7 @@ class FamService : AccessibilityService() {
         if (parts[0] != Pin.get(this)) { if (parts[1] == "PING") reply(s, pk, "NOPIN"); return }
         val cmd = parts[1]; val arg = parts.getOrElse(2) { "" }
         phoneAddr = pk.address; phonePort = pk.port
-        if (cmd == "PING") { reply(s, pk, "PONG|${Build.MODEL}|${if (AdbRemote.ready) "ADB" else "LIMITED"}|${AdbRemote.status.replace("\n", " ; ").replace("|", "/")}"); return }
+        if (cmd == "PING") { reply(s, pk, "PONG|${Build.MODEL}|${if (AdbRemote.ready) "ADB" else "LIMITED"}|${AdbRemote.status.replace("\n", " ; ").replace("|", "/")} ; LAST SCAN: ${scanInfo}"); return }
         main.post { execute(cmd, arg) }
     }
 
@@ -145,7 +148,7 @@ class FamService : AccessibilityService() {
     private fun scheduleRefresh() {
         if (refreshPending) return
         refreshPending = true
-        main.postDelayed({ refreshPending = false; refresh() }, 350)
+        main.postDelayed({ refreshPending = false; refresh() }, 600)
     }
     private fun ensureFresh() { if (dirty || SystemClock.elapsedRealtime() - lastScan > 3000) refresh() }
 
@@ -154,27 +157,50 @@ class FamService : AccessibilityService() {
         scanning = true; dirty = false
         wh.post {
             val out = ArrayList<Rect>()
-            try { rootInActiveWindow?.let { collect(it, out, 0) } } catch (_: Exception) { }
+            var info = "no window"
+            try { appRoot()?.let { info = scanAll(it, out) } } catch (_: Exception) { info = "scan error" }
             main.post {
-                items = out; lastScan = SystemClock.elapsedRealtime(); scanning = false
+                items = out; scanInfo = info; lastScan = SystemClock.elapsedRealtime(); scanning = false
                 if (aimHeld) focusUnderPointer()
                 if (dirty && cursor?.visibility == View.VISIBLE) scheduleRefresh()
             }
         }
     }
 
-    /** Leaf-most FOCUSABLE nodes = the things the real remote can land on. */
-    private fun collect(n: AccessibilityNodeInfo, out: MutableList<Rect>, depth: Int): Boolean {
-        if (depth > 45 || out.size > 1500 || !n.isVisibleToUser) return false
+    /** The window of the app that is on top (falls back to the active window). Needs flagRetrieveInteractiveWindows. */
+    private fun appRoot(): AccessibilityNodeInfo? {
+        try {
+            val top = windows.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }.maxByOrNull { it.layer }
+            val r = top?.root
+            if (r != null) return r
+        } catch (_: Exception) { }
+        return rootInActiveWindow
+    }
+
+    /** Leaf-most interactive nodes: focusable, clickable, or exposing a click/focus action. Returns true if this subtree contributed any. */
+    private fun collect(n: AccessibilityNodeInfo, out: MutableList<Rect>, depth: Int, strict: Boolean): Boolean {
+        if (depth > 60 || out.size > 1500 || visited > 6000) return false
+        visited++
+        val r = Rect(); n.getBoundsInScreen(r)
+        if (!r.isEmpty && (r.right <= 0 || r.bottom <= 0 || r.left >= sw || r.top >= sh)) return false      // completely off-screen
         var childHas = false
-        for (i in 0 until n.childCount) { val c = n.getChild(i) ?: continue; if (collect(c, out, depth + 1)) childHas = true }
+        for (i in 0 until n.childCount) { val c = n.getChild(i) ?: continue; if (collect(c, out, depth + 1, strict)) childHas = true }
         if (childHas) return true
-        if (n.isEnabled && (n.isFocusable || n.isClickable || n.isLongClickable || n.isCheckable)) {
-            val r = Rect(); n.getBoundsInScreen(r)
+        val interactive = n.isFocusable || n.isClickable || n.isLongClickable || n.isCheckable ||
+            (n.actions and (AccessibilityNodeInfo.ACTION_CLICK or AccessibilityNodeInfo.ACTION_FOCUS)) != 0
+        if (n.isEnabled && interactive && (!strict || n.isVisibleToUser)) {
             val big = r.width().toLong() * r.height() > 0.85 * sw * sh
             if (!big && r.width() > 8 && r.height() > 8 && r.right > 0 && r.bottom > 0 && r.left < sw && r.top < sh) { out.add(r); return true }
         }
         return false
+    }
+
+    /** Strict pass first; if an app reports nothing as visible, a lenient pass. Returns a short description for the details popup. */
+    private fun scanAll(root: AccessibilityNodeInfo, out: MutableList<Rect>): String {
+        visited = 0; collect(root, out, 0, true)
+        var mode = "strict"
+        if (out.isEmpty()) { visited = 0; collect(root, out, 0, false); mode = "lenient" }
+        return "pkg=${root.packageName} nodes=$visited items=${out.size} $mode"
     }
 
     // ---------------- pointer; focus follows it ----------------
@@ -225,7 +251,7 @@ class FamService : AccessibilityService() {
         ignoreFocusUntil = SystemClock.elapsedRealtime() + 500
         wh.post {
             try {
-                val root = rootInActiveWindow ?: return@post
+                val root = appRoot() ?: return@post
                 var n: AccessibilityNodeInfo? = findByBounds(root, r, 0)
                 var hops = 0
                 while (n != null && !n.isFocusable && hops < 6) { n = n.parent; hops++ }
@@ -259,9 +285,17 @@ class FamService : AccessibilityService() {
         var lastDist = Float.MAX_VALUE; var worse = 0
         for (i in 0 until 6) {
             if (verifyTarget != target) return                       // pointer already moved on
-            val root = rootInActiveWindow ?: return
-            val f = focusedRect(root) ?: return
-            val tx = target.exactCenterX(); val ty = target.exactCenterY(); val fx = f.exactCenterX(); val fy = f.exactCenterY()
+            val root = appRoot() ?: return
+            val f = focusedRect(root)
+            val tx = target.exactCenterX(); val ty = target.exactCenterY()
+            if (f == null) {        // nothing focused yet: one key press makes the app pick its default item
+                val seq0 = focusSeq.get()
+                sendKeyAny(if (abs(tx - sw / 2f) >= abs(ty - sh / 2f)) (if (tx > sw / 2f) 22 else 21) else (if (ty > sh / 2f) 20 else 19))
+                val t1 = SystemClock.elapsedRealtime()
+                while (focusSeq.get() == seq0 && SystemClock.elapsedRealtime() - t1 < 900) Thread.sleep(30)
+                continue
+            }
+            val fx = f.exactCenterX(); val fy = f.exactCenterY()
             if (f.contains(tx.toInt(), ty.toInt()) || target.contains(fx.toInt(), fy.toInt())) return
             val d = hypot(tx - fx, ty - fy)
             if (d >= lastDist) { if (++worse >= 2) return } else worse = 0
@@ -309,8 +343,8 @@ class FamService : AccessibilityService() {
     }
 
     private fun navWork(dir: Int) {
-        val root = rootInActiveWindow ?: return
-        val list = ArrayList<Rect>(); collect(root, list, 0)
+        val root = appRoot() ?: return
+        val list = ArrayList<Rect>(); scanAll(root, list)
         val focused: Rect? = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.let { n ->
             if (!n.isVisibleToUser) null else Rect().also { n.getBoundsInScreen(it) }
         }?.takeIf { it.width() > 0 && it.height() > 0 }
