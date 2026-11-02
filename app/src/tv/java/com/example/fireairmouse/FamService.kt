@@ -64,6 +64,10 @@ class FamService : AccessibilityService() {
     private val navPending = AtomicInteger(0)
     @Volatile private var scanInfo = "no scan yet"
     private var visited = 0
+    private var motionMode = true            // fallback for apps that expose no items (Netflix, YouTube, Prime…)
+    private var cellPct = 100
+    private var stepX = 0f; private var stepY = 0f; private var stepActive = false
+    @Volatile private var aimStartAt = 0L
     @Volatile private var phoneAddr: InetAddress? = null
     @Volatile private var phonePort = 0
     private val focusSeq = AtomicInteger(0)
@@ -140,7 +144,7 @@ class FamService : AccessibilityService() {
         if (parts[0] != Pin.get(this)) { if (parts[1] == "PING") reply(s, pk, "NOPIN"); return }
         val cmd = parts[1]; val arg = parts.getOrElse(2) { "" }
         phoneAddr = pk.address; phonePort = pk.port
-        if (cmd == "PING") { reply(s, pk, "PONG|${Build.MODEL}|${if (AdbRemote.ready) "ADB" else "LIMITED"}|${AdbRemote.status.replace("\n", " ; ").replace("|", "/")} ; LAST SCAN: ${scanInfo}"); return }
+        if (cmd == "PING") { reply(s, pk, "PONG|${Build.MODEL}|${if (AdbRemote.ready) "ADB" else "LIMITED"}|${AdbRemote.status.replace("\n", " ; ").replace("|", "/")} ; LAST SCAN: ${scanInfo} mode=${if (motionMode && items.size < 4) "arrow-steps" else "highlight"}"); return }
         main.post { execute(cmd, arg) }
     }
 
@@ -217,7 +221,29 @@ class FamService : AccessibilityService() {
         scheduleHide()
     }
 
-    private fun showCursor() { positionCursor(); ensureFresh(); focusUnderPointer() }
+    private fun showCursor() {
+        positionCursor(); ensureFresh(); focusUnderPointer()
+        val noSupport = motionMode && items.size < 4 && lastScan >= aimStartAt     // the app showed us (almost) nothing to point at
+        if (aimHeld && noSupport) motionStep() else stepActive = false
+    }
+
+    /** Apps that draw their own UI: turn pointer movement into real arrow presses (one press per "cell" of travel). */
+    private fun motionStep() {
+        if (!stepActive) { stepX = cx; stepY = cy; stepActive = true; return }
+        val cw = sw * 0.17f * cellPct / 100f; val ch = sh * 0.20f * cellPct / 100f
+        var guard = 0
+        while (guard++ < 3) {
+            val dx = cx - stepX; val dy = cy - stepY
+            val nx = abs(dx) / cw; val ny = abs(dy) / ch
+            val code = when {
+                nx >= 1f && nx >= ny -> { stepX += if (dx > 0) cw else -cw; if (dx > 0) 22 else 21 }
+                ny >= 1f -> { stepY += if (dy > 0) ch else -ch; if (dy > 0) 20 else 19 }
+                else -> 0
+            }
+            if (code == 0) break
+            wh.post { sendKeyAny(code) }          // network work must not run on the main thread
+        }
+    }
 
     private fun nearest(list: List<Rect>, px: Int, py: Int, maxDist: Float): Rect? {
         var best: Rect? = null; var bd = Float.MAX_VALUE
@@ -395,8 +421,8 @@ class FamService : AccessibilityService() {
                 }
             }
             "AIM" -> {
-                if (arg == "1") { aimHeld = true; main.removeCallbacks(aimExpire); main.postDelayed(aimExpire, 2500); showCursor() }
-                else { aimHeld = false; main.removeCallbacks(aimExpire); focusUnderPointer(true); scheduleHide() }
+                if (arg == "1") { aimHeld = true; aimStartAt = SystemClock.elapsedRealtime(); stepActive = false; dirty = true; main.removeCallbacks(aimExpire); main.postDelayed(aimExpire, 2500); showCursor() }
+                else { aimHeld = false; stepActive = false; main.removeCallbacks(aimExpire); focusUnderPointer(true); scheduleHide() }
             }
             "LK" -> {
                 if (arg == "1") {
@@ -409,6 +435,8 @@ class FamService : AccessibilityService() {
                 }
             }
             "ADB" -> AdbRemote.forceReconnect(this)
+            "MOT" -> motionMode = arg == "1"
+            "CELL" -> arg.toIntOrNull()?.let { cellPct = it.coerceIn(30, 300) }
             "K" -> key(arg)
             "T" -> typeText(arg)
             "B" -> if (AdbRemote.ready) AdbRemote.key(67) else editFocused { it.dropLast(1) }

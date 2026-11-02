@@ -339,6 +339,7 @@ class PhoneActivity : Activity(), SensorEventListener {
             val hasIp = !prefs.getString("tv_ip", "").isNullOrBlank()
             if (hasIp) net.send("PING")
             if (locked) net.send("LK|1")
+            if (hasIp) { net.send("MOT|${if (prefs.getBoolean("motion", true)) 1 else 0}"); net.send("CELL|${prefs.getInt("cell", 100)}") }
             if (hasIp && prefs.getBoolean("adb_wanted", false)) { AdbRemote.keepAlive(); if (!AdbRemote.ready) AdbRemote.retrySoon(this@PhoneActivity) }
             setState(when {
                 !hasIp -> "Not set up – tap Connect"
@@ -409,7 +410,21 @@ class PhoneActivity : Activity(), SensorEventListener {
             })
         })
         box.addView(Switch(this).apply { text = "Upright mode (screen facing you)"; setTextColor(TEXT); isChecked = upright; setPadding(0, dp(16), 0, 0); setOnCheckedChangeListener { _, c -> upright = c } })
-        AlertDialog.Builder(this, DIALOG).setTitle("Settings").setView(box).setPositiveButton("Done", null).show()
+        box.addView(Switch(this).apply {
+            text = "Arrow steps in apps without pointer support (Netflix, YouTube, Prime…): moving the phone presses arrows"
+            setTextColor(TEXT); isChecked = prefs.getBoolean("motion", true); setPadding(0, dp(16), 0, 0)
+            setOnCheckedChangeListener { _, c -> prefs.edit().putBoolean("motion", c).apply() }
+        })
+        box.addView(TextView(this).apply { text = "Arrow step size (smaller = more arrows for the same movement)"; setTextColor(SUB); setPadding(0, dp(12), 0, 0) })
+        box.addView(SeekBar(this).apply {
+            max = 170; progress = prefs.getInt("cell", 100) - 30
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(s: SeekBar, p: Int, u: Boolean) { prefs.edit().putInt("cell", p + 30).apply() }
+                override fun onStartTrackingTouch(s: SeekBar) {}
+                override fun onStopTrackingTouch(s: SeekBar) {}
+            })
+        })
+        AlertDialog.Builder(this, DIALOG).setTitle("Settings").setView(ScrollView(this).apply { addView(box) }).setPositiveButton("Done", null).show()
     }
 
     // ---- gyro ----

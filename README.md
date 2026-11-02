@@ -93,7 +93,8 @@ Two Gradle product flavours share one module: `phone` (`app.fireairmouse.remote`
 ## Known limitations
 
 - Pointer-to-focus only works on screens that expose their items to Android accessibility (most menus and tiles; not
-  video surfaces or some custom-drawn screens).
+  video surfaces or custom-drawn apps such as Netflix, YouTube or Prime Video). In those apps the pointer falls back to
+  **arrow steps**: moving the phone presses arrow keys (approximate, adjustable in Settings).
 - The Alexa/voice button, power, and the stick's own Menu long-press menus cannot be reproduced.
 - Each key press runs `input keyevent` on the stick, which takes a few hundred milliseconds on low-end sticks.
 - Google Play Protect may warn about sideloaded apps from unknown developers; sign releases with your own key.

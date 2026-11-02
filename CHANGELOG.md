@@ -1,5 +1,8 @@
 # Changelog
 
+## 5.4
+- Apps that draw their own UI and expose nothing to accessibility (Netflix, YouTube, Prime Video…): moving the pointer now presses real arrow keys, one press per "cell" of travel. Switch and step size are in the phone's Settings. The details popup shows `mode=arrow-steps` or `mode=highlight`.
+
 ## 5.3
 - TV: pointer highlight/selection now works inside apps – scans the top application window, accepts nodes that only expose a click/focus action, no longer discards whole subtrees that report "not visible", and handles apps with nothing focused yet. The phone's details popup shows the last scan (package, node and item counts).
 
